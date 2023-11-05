@@ -1,65 +1,67 @@
 from dotenv import load_dotenv
 import os
 from PyPDF2 import PdfReader
-import streamlit as st
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain import FAISS
 from langchain.chains.question_answering import load_qa_chain
 from langchain.llms import OpenAI
 from langchain.callbacks import get_openai_callback
+from pdf_section_mapper import get_section_mapping
+import streamlit as st
 
-# Load environment variables
+# Initialize environment variables
 load_dotenv()
 
-def process_text(text):
-    # Split the text into chunks using Langchain's CharacterTextSplitter
-    text_splitter = CharacterTextSplitter(
+
+def create_embedding_index_from_text(document_text):
+    # Create text segments from the document
+    segmenter = CharacterTextSplitter(
         separator="\n",
         chunk_size=1000,
         chunk_overlap=200,
         length_function=len
     )
-    chunks = text_splitter.split_text(text)
+    text_segments = segmenter.split_text(document_text)
     
-    # Convert the chunks of text into embeddings to form a knowledge base
-    embeddings = OpenAIEmbeddings()
-    knowledgeBase = FAISS.from_texts(chunks, embeddings)
+    # Generate embeddings for the text segments
+    text_embeddings_generator = OpenAIEmbeddings()
+    embedding_index = FAISS.from_texts(text_segments, text_embeddings_generator)
     
-    return knowledgeBase
+    return embedding_index
 
-def main():
-    st.title("Chat with your PDF 💬")
+def interactive_pdf_qa():
+    st.title("Your Carbon Market Document Assistant 🌲")
     
-    pdf = st.file_uploader('Upload your PDF Document', type='pdf')
+    uploaded_pdf = st.file_uploader('Upload your PDF Document', type='pdf')
     
-    if pdf is not None:
-        pdf_reader = PdfReader(pdf)
-        # Text variable will store the pdf text
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
+    if uploaded_pdf:
+        pdf_content_reader = PdfReader(uploaded_pdf)
+        # Accumulate text content from the PDF
+        accumulated_text = ""
+        for page in pdf_content_reader.pages:
+            accumulated_text += page.extract_text()
         
-        # Create the knowledge base object
-        knowledgeBase = process_text(text)
+        # Build the index of embeddings from the PDF text
+        pdf_embedding_index = create_embedding_index_from_text(accumulated_text)
         
-        query = st.text_input('Ask a question to the PDF')
-        cancel_button = st.button('Cancel')
+        user_query = st.text_input('Enter your question for the PDF')
+        is_cancelled = st.button('Cancel')
         
-        if cancel_button:
+        if is_cancelled:
             st.stop()
         
-        if query:
-            docs = knowledgeBase.similarity_search(query)
-            llm = OpenAI()
-            chain = load_qa_chain(llm, chain_type='stuff')
+        if user_query:
+            similar_documents = pdf_embedding_index.similarity_search(user_query)
+            language_model = OpenAI()
+            qa_chain = load_qa_chain(language_model, chain_type='stuff')
             
-            with get_openai_callback() as cost:
-                response = chain.run(input_documents=docs, question=query)
-                print(cost)
+            with get_openai_callback() as cost_tracker:
+                answer = qa_chain.run(input_documents=similar_documents, question=user_query)
+                print(cost_tracker)
                 
-            st.write(response)
+            st.write(answer)
             
-            
+# Entry point for the Streamlit application
 if __name__ == "__main__":
-    main()
+    interactive_pdf_qa()
